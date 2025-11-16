@@ -10,7 +10,6 @@ jobs:
     runs-on: macos-latest
 
     env:
-      # We only keep the env vars that define paths
       BAZEL_USER_ROOT: /private/var/tmp/_bazel_telegram
       BUILD_WORKING_DIR: /Users/telegram/build-working-dir
       SOURCE_PATH: /Users/telegram/telegram-ios
@@ -22,12 +21,12 @@ jobs:
         with:
           fetch-depth: '0'
 
-      # Step 2: Initialize Submodules (SKIPPING mobyrix/tgcalls)
+      # Step 2: Initialize Submodules (SKIPPING tgcalls)
       - name: Initialize Submodules (Skip tgcalls)
         run: |
           set -x
           git submodule init
-          git -c submodule."submodules/TgVoipWebrtc/tgcalls".update=none submodule update --recursive
+          git -c submodule."submodules/TgVoIPWebrtc/tgcalls".update=none submodule update --recursive
           
       # Step 3: Set the correct Xcode version
       - name: Set active Xcode path
@@ -44,18 +43,42 @@ jobs:
           cp -R $GITHUB_WORKSPACE /Users/telegram/
           mv /Users/telegram/$(basename $GITHUB_WORKSPACE) /Users/telegram/telegram-ios
 
-      # Step 5: Build Unsigned App (using the correct build system)
-      # This replaces the xcodebuild command with the real build script.
-      # It will generate a build configuration that excludes the missing module.
+      # Step 5: Create the build configuration file from secrets
+      - name: Create Build Configuration
+        run: |
+          echo "Creating my_config.json"
+          # We create the JSON file that --configurationPath requires.
+          # We must include bundleId and teamId so the script's
+          # validation passes, even if they aren't used for signing.
+          echo '{ \
+            "apiKey": "${{ secrets.API_ID }}", \
+            "apiHash": "${{ secrets.API_HASH }}", \
+            "bundleId": "app.nicegram", \
+            "teamId": "DUMMYTEAMID" \
+          }' > $SOURCE_PATH/my_config.json
+          
+          echo "Configuration file created:"
+          cat $SOURCE_PATH/my_config.json
+
+      # Step 6: Build Unsigned App (with all required arguments)
       - name: Build Unsigned App with Make.py
         run: |
           set -x
           cd $SOURCE_PATH
           
-          # This command builds the app unsigned for a real device (arm64)
+          # This command provides all the arguments the script requires:
+          # --buildNumber: We use the GitHub run number.
+          # --configurationPath: We use the JSON we just created.
+          # --xcodeManagedCodesigning: Satisfies the codesigning requirement.
+          # --bazelArguments: This is the magic. We pass the "disable" flag
+          #   directly to Bazel, bypassing the Make.py script's logic.
+          
           python3 build-system/Make/Make.py build \
+            --buildNumber ${{ github.run_number }} \
             --configuration=release_arm64 \
-            --disableProvisioningProfiles
+            --configurationPath $SOURCE_PATH/my_config.json \
+            --xcodeManagedCodesigning \
+            --bazelArguments="--//Telegram:disableProvisioningProfiles"
             
           # Find the .app file. The path is complex.
           APP_PATH=$(find "bazel-out" -path "*Release-arm64/bin/Telegram/Telegram.app" | head -n 1)
@@ -69,7 +92,7 @@ jobs:
           mkdir -p $BUILD_WORKING_DIR/ipa
           echo "IPA_PATH=$BUILD_WORKING_DIR/ipa/Nicegram.ipa" >> $GITHUB_ENV
 
-      # Step 6: Manually package the unsigned .app into a .ipa
+      # Step 7: Manually package the unsigned .app into a .ipa
       - name: Package Unsigned IPA
         run: |
           set -x
@@ -77,7 +100,7 @@ jobs:
           cp -R "${{ env.APP_PATH }}" "Payload/Nicegram.app"
           zip -r "${{ env.IPA_PATH }}" "Payload"
 
-      # Step 7: Upload the .ipa as a build artifact
+      # Step 8: Upload the .ipa as a build artifact
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
