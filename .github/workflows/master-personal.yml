@@ -26,7 +26,7 @@ jobs:
         run: |
           set -x
           git submodule init
-          git -c submodule."submodules/TgVoIPWebrtc/tgcalls".update=none submodule update --recursive
+          git -c submodule."submodules/TgVoipWebrtc/tgcalls".update=none submodule update --recursive
           
       # Step 3: Set the correct Xcode version
       - name: Set active Xcode path
