@@ -101,27 +101,31 @@ jobs:
             --xcodeManagedCodesigning \
             --disableProvisioningProfiles
             
-      # Step 9: List Generated Files (NEW DEBUG STEP)
+      # Step 9: List Generated Files
       - name: List Generated Files
         run: |
           set -x
-          echo "Listing contents of $SOURCE_PATH"
-          ls -l $SOURCE_PATH
-          echo "---"
           echo "Listing contents of $SOURCE_PATH/Telegram"
           ls -l $SOURCE_PATH/Telegram
 
-      # Step 10: Build the Unsigned App (using -project)
+      # Step 10: List Project Schemes (NEW DEBUG STEP)
+      - name: List Project Schemes
+        run: |
+          set -x
+          echo "Listing schemes for $SOURCE_PATH/Telegram/Telegram.xcodeproj"
+          xcodebuild -list -project "$SOURCE_PATH/Telegram/Telegram.xcodeproj"
+
+      # Step 11: Build the Unsigned App (FIXED SCHEME)
       - name: Build Unsigned App
         run: |
           set -x
           cd $SOURCE_PATH
           mkdir -p $BUILD_WORKING_DIR/archive
 
-          # Use -project to target the .xcodeproj file directly
+          # Use the 'Telegram' scheme, not 'Nicegram'
           xcodebuild archive \
             -project "Telegram/Telegram.xcodeproj" \
-            -scheme "Nicegram" \
+            -scheme "Telegram" \
             -configuration "Release" \
             -archivePath "$BUILD_WORKING_DIR/archive/Nicegram.xcarchive" \
             -destination "generic/platform=iOS" \
@@ -131,17 +135,21 @@ jobs:
           
           echo "IPA_PATH=$BUILD_WORKING_DIR/archive/Nicegram.ipa" >> $GITHUB_ENV
 
-      # Step 11: Manually package the unsigned .app into a .ipa
+      # Step 12: Manually package the unsigned .app into a .ipa (FIXED APP NAME)
       - name: Package Unsigned IPA
         run: |
           set -x
           cd $BUILD_WORKING_DIR/archive
           
           mkdir -p Payload
-          cp -R "Nicegram.xcarchive/Products/Applications/Nicegram.app" "Payload/Nicegram.app"
+          # The app name will be Telegram.app, matching the scheme
+          cp -R "Nicegram.xcarchive/Products/Applications/Telegram.app" "Payload/Nicegram.app"
+          
+          # We rename it to Nicegram.app inside the payload
+          # Then zip it to create the final Nicegram.ipa
           zip -r "Nicegram.ipa" "Payload"
 
-      # Step 12: Upload the .ipa as a build artifact
+      # Step 13: Upload the .ipa as a build artifact
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
