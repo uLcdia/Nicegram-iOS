@@ -28,13 +28,24 @@ jobs:
           git submodule init
           git -c submodule."submodules/TgVoipWebrtc/tgcalls".update=none submodule update --recursive
           
-      # Step 3: Set the correct Xcode version
+      # Step 3: Patch Private Dependencies (NEW STEP)
+      # This finds all BUILD files and comments out the private dependencies
+      # that are causing the `generateProject` step to fail.
+      - name: Patch Private Dependencies
+        run: |
+          set -x
+          find submodules -name "BUILD" -o -name "BUILD.bazel" | \
+          xargs sed -i '' \
+          -e 's/.*nicegram_wallet_ios.*/# &/' \
+          -e 's/.*nicegram_assistant_ios.*/# &/'
+          
+      # Step 4: Set the correct Xcode version
       - name: Set active Xcode path
         run: |
           XCODE_VERSION=$(cat versions.json | python3 -c 'import json,sys;obj=json.load(sys.stdin);print(obj["xcode"]);')
           sudo xcode-select -s /Applications/Xcode_$XCODE_VERSION.app/Contents/Developer
 
-      # Step 4: Create the same directory structure the build expects
+      # Step 5: Create the same directory structure the build expects
       - name: Create canonical source directory
         run: |
           set -x
@@ -43,15 +54,10 @@ jobs:
           cp -R $GITHUB_WORKSPACE /Users/telegram/
           mv /Users/telegram/$(basename $GITHUB_WORKSPACE) /Users/telegram/telegram-ios
 
-      # Step 5: Create the (correct) build configuration file
+      # Step 6: Create the (correct) build configuration file
       - name: Create Build Configuration
         run: |
           echo "Creating my_config.json"
-          
-          # This creates a valid JSON file with all the required keys
-          # from BuildConfiguration.py, using secrets for api_id/api_hash
-          # and dummy values from the example for the rest.
-          
           printf '{\n' > $SOURCE_PATH/my_config.json
           printf '  "bundle_id": "app.nicegram",\n' >> $SOURCE_PATH/my_config.json
           printf '  "api_id": "%s",\n' "${{ secrets.API_ID }}" >> $SOURCE_PATH/my_config.json
@@ -72,7 +78,7 @@ jobs:
           echo "Configuration file created:"
           cat $SOURCE_PATH/my_config.json
 
-      # Step 6: Generate the Xcode Project
+      # Step 7: Generate the Xcode Project
       - name: Generate Xcode Project
         run: |
           set -x
@@ -84,7 +90,7 @@ jobs:
             --xcodeManagedCodesigning \
             --disableProvisioningProfiles
             
-      # Step 7: Build the Unsigned App (using xcodebuild)
+      # Step 8: Build the Unsigned App (using xcodebuild)
       - name: Build Unsigned App
         run: |
           set -x
@@ -103,7 +109,7 @@ jobs:
           
           echo "IPA_PATH=$BUILD_WORKING_DIR/archive/Nicegram.ipa" >> $GITHUB_ENV
 
-      # Step 8: Manually package the unsigned .app into a .ipa
+      # Step 9: Manually package the unsigned .app into a .ipa
       - name: Package Unsigned IPA
         run: |
           set -x
@@ -113,11 +119,10 @@ jobs:
           cp -R "Nicegram.xcarchive/Products/Applications/Nicegram.app" "Payload/Nicegram.app"
           zip -r "Nicegram.ipa" "Payload"
 
-      # Step 9: Upload the .ipa as a build artifact
+      # Step 10: Upload the .ipa as a build artifact
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Nicegram-unsigned
           path: ${{ env.IPA_PATH }}
           retention-days: 7
-
