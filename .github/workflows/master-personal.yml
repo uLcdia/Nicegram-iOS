@@ -59,51 +59,47 @@ jobs:
           
           echo "Configuration file created:"
           cat $SOURCE_PATH/my_config.json
-
-      # Step 6: Build Unsigned App (with all required arguments)
-      - name: Build Unsigned App with Make.py
+          
+      # Step 6: Generate the Xcode Project
+      - name: Generate Xcode Project
         run: |
           set -x
           cd $SOURCE_PATH
           
-          # This command provides all the arguments the script requires:
-          # --buildNumber: We use the GitHub run number.
-          # --configurationPath: We use the JSON we just created.
-          # --xcodeManagedCodesigning: Satisfies the codesigning requirement.
-          # --bazelArguments: This is the magic. We pass the "disable" flag
-          #   directly to Bazel, bypassing the Make.py script's logic.
-          
-          python3 build-system/Make/Make.py build \
+          # This command uses the flag that DOES exist: --disableProvisioningProfiles
+          python3 build-system/Make/Make.py generateProject \
             --buildNumber ${{ github.run_number }} \
-            --configuration=release_arm64 \
             --configurationPath $SOURCE_PATH/my_config.json \
             --xcodeManagedCodesigning \
-            --bazelArguments="--//Telegram:disableProvisioningProfiles"
+            --disableProvisioningProfiles
             
-          # Find the .app file. The path is complex.
-          APP_PATH=$(find "bazel-out" -path "*Release-arm64/bin/Telegram/Telegram.app" | head -n 1)
-          if [ -z "$APP_PATH" ]; then
-            echo "::error::Could not find .app file in bazel-out"
-            exit 1
-          fi
-          echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
-          
-          # Set the final IPA path
-          mkdir -p $BUILD_WORKING_DIR/ipa
-          echo "IPA_PATH=$BUILD_WORKING_DIR/ipa/Nicegram.ipa" >> $GITHUB_ENV
+      # Step 7: Build the Unsigned App (using xcodebuild)
+      - name: Build Unsigned App
+        run: |
+          set -x
+          cd $SOURCE_PATH
+          mkdir -p $BUILD_WORKING_DIR/archive
 
-      # Step 7: Manually package the unsigned .app into a .ipa
+          # Now that Telegram.xcworkspace exists, this will work.
+          xcodebuild archive \
+            -workspace "Telegram.xcworkspace" \
+            -scheme "Nicegram" \
+            -configuration "Release" \
+            -archivePath "$BUILD_WORKING_DIR/archive/Nicegram.xcarchive" \
+            -destination "generic/platform=iOS" \
+            "CODE_SIGN_IDENTITY=" \
+            "CODE_SIGNING_REQUIRED=NO" \
+            "CODE_SIGNING_ALLOWED=NO"
+          
+          echo "IPA_PATH=$BUILD_WORKING_DIR/archive/Nicegram.ipa" >> $GITHUB_ENV
+
+      # Step 8: Manually package the unsigned .app into a .ipa
       - name: Package Unsigned IPA
         run: |
           set -x
-          mkdir -p "Payload"
-          cp -R "${{ env.APP_PATH }}" "Payload/Nicegram.app"
-          zip -r "${{ env.IPA_PATH }}" "Payload"
+          cd $BUILD_WORKING_DIR/archive
+          
+          mkdir -p Payload
+          cp -R "Nicegram.xcarchive/Products/Applications/Nicegram.app" "Payload/Nicegram.app"
+          zip -r "Nicegram.ipa" "Payload"
 
-      # Step 8: Upload the .ipa as a build artifact
-      - name: Upload IPA Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Nicegram-unsigned
-          path: ${{ env.IPA_PATH }}
-          retention-days: 7
