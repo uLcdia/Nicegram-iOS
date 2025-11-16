@@ -64,7 +64,9 @@ jobs:
           printf '  "app_specific_url_scheme": "tg",\n' >> $SOURCE_PATH/my_config.json
           printf '  "premium_iap_product_id": "org.telegram.telegramPremium.monthly",\n' >> $SOURCE_PATH/my_config.json
           printf '  "enable_siri": false,\n' >> $SOURCE_PATH/my_config.json
-          printf '  "enable_icloud": false\n' >> $SOURCE_PATH/my_config.json
+          printf '  "enable_icloud": false,\n' >> $SOURCE_PATH/my_config.json
+          printf '  "google_client_scheme": "com.google.dummy",\n' >> $SOURCE_PATH/my_config.json
+          printf '  "ng_env": "personal"\n' >> $SOURCE_PATH/my_config.json
           printf '}\n' >> $SOURCE_PATH/my_config.json
 
           echo "Configuration file created:"
