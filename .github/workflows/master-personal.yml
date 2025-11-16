@@ -84,17 +84,21 @@ jobs:
           import shlex
           ' Make.py
 
-          # 2. Fix 'build' function to read the argument
+          # 2. Fix 'build' function to read the argument (note the 4-space indent)
           sed -i '' '/bazel_command_line.set_enable_sandbox(arguments.sandbox)/a \
-              if arguments.bazelArguments is not None: bazel_command_line.add_additional_args(arguments.bazelArguments)
+      if arguments.bazelArguments is not None: bazel_command_line.add_additional_args(arguments.bazelArguments)
           ' Make.py
           
-          # 3. Fix 'invoke_build' function to use the argument
+          # 3. Fix 'invoke_build' function to use the argument (note the 8-space indent)
           sed -i '' '/combined_arguments += self.common_args/i \
-              if self.additional_args is not None: combined_arguments += shlex.split(self.additional_args)
+          if self.additional_args is not None: combined_arguments += shlex.split(self.additional_args)
           ' Make.py
           
           echo "--- Make.py patched ---"
+          echo "Verifying patch 2:"
+          grep "bazelArguments is not None" Make.py
+          echo "Verifying patch 3:"
+          grep "additional_args is not None" Make.py
 
       # Step 8: Build Unsigned App (using patched Make.py)
       - name: Build Unsigned App
