@@ -15,20 +15,20 @@ jobs:
       SOURCE_PATH: /Users/telegram/telegram-ios
 
     steps:
-      # Step 1: Checkout the main repository (without submodules)
+      # Step 1: Checkout Code
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
           fetch-depth: '0'
 
-      # Step 2: Initialize Submodules (SKIPPING tgcalls)
+      # Step 2: Initialize Submodules (Skip tgcalls)
       - name: Initialize Submodules (Skip tgcalls)
         run: |
           set -x
           git submodule init
           git -c submodule."submodules/TgVoipWebrtc/tgcalls".update=none submodule update --recursive
           
-      # Step 3: Patch Private Dependencies
+      # Step 3: Patch Private Dependencies (BUILD/BUILD.bazel)
       - name: Patch Private Dependencies
         run: |
           set -x
@@ -37,26 +37,13 @@ jobs:
           -e 's/.*nicegram_wallet_ios.*/# &/' \
           -e 's/.*nicegram_assistant_ios.*/# &/'
           
-      # Step 4: Verify Patch
-      - name: Verify Patch
-        run: |
-          set -x
-          echo "---"
-          echo "Verifying 'nicegram_wallet_ios' is patched:"
-          grep -r "nicegram_wallet_ios" . --exclude-dir=".git" || true
-          echo "---"
-          echo "Verifying 'nicegram_assistant_ios' is patched:"
-          grep -r "nicegram_assistant_ios" . --exclude-dir=".git" || true
-          echo "---"
-          echo "Verification complete. Review the lines above."
-          
-      # Step 5: Set the correct Xcode version
+      # Step 4: Set the correct Xcode version
       - name: Set active Xcode path
         run: |
           XCODE_VERSION=$(cat versions.json | python3 -c 'import json,sys;obj=json.load(sys.stdin);print(obj["xcode"]);')
           sudo xcode-select -s /Applications/Xcode_$XCODE_VERSION.app/Contents/Developer
 
-      # Step 6: Create the same directory structure the build expects
+      # Step 5: Create the same directory structure the build expects
       - name: Create canonical source directory
         run: |
           set -x
@@ -65,7 +52,7 @@ jobs:
           cp -R $GITHUB_WORKSPACE /Users/telegram/
           mv /Users/telegram/$(basename $GITHUB_WORKSPACE) /Users/telegram/telegram-ios
 
-      # Step 7: Create the (correct) build configuration file
+      # Step 6: Create the (correct) build configuration file
       - name: Create Build Configuration
         run: |
           echo "Creating my_config.json"
@@ -86,87 +73,68 @@ jobs:
           printf '  "ng_env": "personal"\n' >> $SOURCE_PATH/my_config.json
           printf '}\n' >> $SOURCE_PATH/my_config.json
 
-          echo "Configuration file created:"
-          cat $SOURCE_PATH/my_config.json
-
-      # Step 8: Generate the Xcode Project (This step is correct and working)
-      - name: Generate Xcode Project
+      # Step 7: Patch Make.py to fix the broken --bazelArguments flag
+      - name: Patch Make.py
         run: |
           set -x
-          cd $SOURCE_PATH
+          cd $SOURCE_PATH/build-system/Make
           
-          python3 build-system/Make/Make.py generateProject \
-            --buildNumber ${{ github.run_number }} \
-            --configurationPath $SOURCE_PATH/my_config.json \
-            --xcodeManagedCodesigning \
-            --disableProvisioningProfiles
-            
-      # Step 9: List Generated Files
-      - name: List Generated Files
-        run: |
-          set -x
-          echo "Listing contents of $SOURCE_PATH/Telegram"
-          ls -l $SOURCE_PATH/Telegram
+          # 1. Add 'import shlex' at the top
+          sed -i '' '2a \
+          import shlex
+          ' Make.py
 
-      # Step 10: List Project Schemes
-      - name: List Project Schemes
-        run: |
-          set -x
-          echo "Listing schemes for $SOURCE_PATH/Telegram/Telegram.xcodeproj"
-          xcodebuild -list -project "$SOURCE_PATH/Telegram/Telegram.xcodeproj"
+          # 2. Fix 'build' function to read the argument
+          sed -i '' '/bazel_command_line.set_enable_sandbox(arguments.sandbox)/a \
+              if arguments.bazelArguments is not None: bazel_command_line.add_additional_args(arguments.bazelArguments)
+          ' Make.py
+          
+          # 3. Fix 'invoke_build' function to use the argument
+          sed -i '' '/combined_arguments += self.common_args/i \
+              if self.additional_args is not None: combined_arguments += shlex.split(self.additional_args)
+          ' Make.py
+          
+          echo "--- Make.py patched ---"
 
-      # Step 11: Build the Unsigned App (FIXED: use 'build' action)
+      # Step 8: Build Unsigned App (using patched Make.py)
       - name: Build Unsigned App
         run: |
           set -x
           cd $SOURCE_PATH
           
-          # Define our output directories
-          BUILD_APP_DIR="$BUILD_WORKING_DIR/build_output"
-          BUILD_IPA_DIR="$BUILD_WORKING_DIR/archive"
-          FINAL_IPA_PATH="$BUILD_IPA_DIR/Nicegram.ipa"
+          mkdir -p $BUILD_WORKING_DIR/artifacts
           
-          mkdir -p $BUILD_APP_DIR
-          mkdir -p $BUILD_IPA_DIR
-
-          # Use 'build' instead of 'archive'
-          # Force the output .app to our build_output directory
-          xcodebuild build \
-            -project "Telegram/Telegram.xcodeproj" \
-            -scheme "Telegram" \
-            -configuration "Release" \
-            -destination "generic/platform=iOS" \
-            "CONFIGURATION_BUILD_DIR=$BUILD_APP_DIR" \
-            "CODE_SIGN_IDENTITY=" \
-            "CODE_SIGNING_REQUIRED=NO" \
-            "CODE_SIGNING_ALLOWED=NO"
+          # Note the order: global args like --bazelArguments come BEFORE the 'build' command
+          python3 build-system/Make/Make.py \
+            --bazelArguments="--//Telegram:disableProvisioningProfiles" \
+            build \
+            --buildNumber ${{ github.run_number }} \
+            --configuration=release_arm64 \
+            --configurationPath $SOURCE_PATH/my_config.json \
+            --xcodeManagedCodesigning \
+            --outputBuildArtifactsPath $BUILD_WORKING_DIR/artifacts
           
-          # Set IPA_PATH for subsequent steps
-          echo "IPA_PATH=$FINAL_IPA_PATH" >> $GITHUB_ENV
+          # Set IPA_PATH for the upload step
+          echo "IPA_PATH=$BUILD_WORKING_DIR/artifacts/Telegram.ipa" >> $GITHUB_ENV
           
-          # Debug print for you
+          # Debug output
           echo "---"
-          echo "Final IPA will be at: $FINAL_IPA_PATH"
+          echo "Build complete. Artifacts at $BUILD_WORKING_DIR/artifacts"
+          ls -l $BUILD_WORKING_DIR/artifacts
+          echo "IPA_PATH is ${{ env.IPA_PATH }}"
           echo "---"
 
-      # Step 12: Manually package the unsigned .app into a .ipa
-      - name: Package Unsigned IPA
+      # Step 9: Rename and Upload Artifact
+      - name: Rename and Upload Artifact
         run: |
           set -x
-          # Go to the directory where Telegram.app was built
-          cd $BUILD_WORKING_DIR/build_output
-          
-          mkdir -p Payload
-          # Move the .app inside Payload, renaming it to Nicegram.app
-          mv "Telegram.app" "Payload/Nicegram.app"
-          
-          # Create the .ipa file in the archive directory
-          zip -r "${{ env.IPA_PATH }}" "Payload"
-
-      # Step 13: Upload the .ipa as a build artifact
+          # The script names it Telegram.ipa, let's rename it
+          mv "${{ env.IPA_PATH }}" "$BUILD_WORKING_DIR/artifacts/Nicegram.ipa"
+          echo "RENAMED_IPA_PATH=$BUILD_WORKING_DIR/artifacts/Nicegram.ipa" >> $GITHUB_ENV
+        
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Nicegram-unsigned
-          path: ${{ env.IPA_PATH }}
+          path: ${{ env.RENAMED_IPA_PATH }}
           retention-days: 7
