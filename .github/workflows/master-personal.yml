@@ -80,7 +80,6 @@ jobs:
           cd $SOURCE_PATH/build-system/Make
           
           # Use Python to read, patch, and rewrite the Make.py file.
-          # This is much safer than sed for multi-line, indented patches.
           python3 -c "
           with open('Make.py', 'r') as f:
               lines = f.readlines()
@@ -98,7 +97,7 @@ jobs:
               if 'bazel_command_line.set_enable_sandbox(arguments.sandbox)' in line:
                   build_func_point = i + 1
               # Find the line in the 'invoke_build' function to insert before
-              if 'combined_arguments += self.common_args' in line and 'invoke_build' in lines[i-10]:
+              if 'combined_arguments += self.common_args' in line and 'invoke_build' in ''.join(lines[max(0, i-15):i]):
                   invoke_func_point = i
           
           # 1. Add 'import shlex'
@@ -110,22 +109,24 @@ jobs:
           
           # 2. Fix 'build' function to read the argument
           if build_func_point != -1:
-              indent = lines[build_func_point - 1].split('bazel_command_line')[0]
+              # Get indentation from the line *before* the insertion point
+              indent = lines[build_func_point - 1][:len(lines[build_func_point - 1]) - len(lines[build_func_point - 1].lstrip())]
               lines.insert(build_func_point, f\"{indent}if arguments.bazelArguments is not None: bazel_command_line.add_additional_args(arguments.bazelArguments)\n\")
               invoke_func_point += 1 # Adjust next insertion point
           
           # 3. Fix 'invoke_build' function to use the argument
           if invoke_func_point != -1:
-              indent = lines[invoke_func_point].split('combined_arguments')[0]
+              # Get indentation from the line *at* the insertion point
+              indent = lines[invoke_func_point][:len(lines[invoke_func_point]) - len(lines[invoke_func_point].lstrip())]
               lines.insert(invoke_func_point, f\"{indent}if self.additional_args is not None: combined_arguments += shlex.split(self.additional_args)\n\")
           
           # Write the patched file out
           with open('Make.py.patched', 'w') as f:
               f.writelines(lines)
-          
-          # Replace the original
-          mv Make.py.patched Make.py
           "
+          
+          # Replace the original - This is now a BASH command
+          mv Make.py.patched Make.py
           
           echo "--- Make.py patched ---"
           echo "Verifying patch 1 (import):"
