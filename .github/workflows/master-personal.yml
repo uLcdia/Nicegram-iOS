@@ -10,25 +10,32 @@ jobs:
     runs-on: macos-latest
 
     env:
+      # We only keep the env vars that define paths
       BAZEL_USER_ROOT: /private/var/tmp/_bazel_telegram
       BUILD_WORKING_DIR: /Users/telegram/build-working-dir
       SOURCE_PATH: /Users/telegram/telegram-ios
-      BUNDLE_ID: app.nicegram
 
     steps:
-      # Step 1: Checkout the code
-      - uses: actions/checkout@v4
+      # Step 1: Checkout the main repository (without submodules)
+      - name: Checkout Code
+        uses: actions/checkout@v4
         with:
-          submodules: 'recursive'
           fetch-depth: '0'
 
-      # Step 2: Set the correct Xcode version
+      # Step 2: Initialize Submodules (SKIPPING mobyrix/tgcalls)
+      - name: Initialize Submodules (Skip tgcalls)
+        run: |
+          set -x
+          git submodule init
+          git -c submodule."submodules/TgVoipWebrtc/tgcalls".update=none submodule update --recursive
+          
+      # Step 3: Set the correct Xcode version
       - name: Set active Xcode path
         run: |
           XCODE_VERSION=$(cat versions.json | python3 -c 'import json,sys;obj=json.load(sys.stdin);print(obj["xcode"]);')
           sudo xcode-select -s /Applications/Xcode_$XCODE_VERSION.app/Contents/Developer
 
-      # Step 3: Create the same directory structure the build expects
+      # Step 4: Create the same directory structure the build expects
       - name: Create canonical source directory
         run: |
           set -x
@@ -37,44 +44,40 @@ jobs:
           cp -R $GITHUB_WORKSPACE /Users/telegram/
           mv /Users/telegram/$(basename $GITHUB_WORKSPACE) /Users/telegram/telegram-ios
 
-      # Step 4: Build the app WITHOUT code signing
-      - name: Build Unsigned App
+      # Step 5: Build Unsigned App (using the correct build system)
+      # This replaces the xcodebuild command with the real build script.
+      # It will generate a build configuration that excludes the missing module.
+      - name: Build Unsigned App with Make.py
         run: |
           set -x
           cd $SOURCE_PATH
-          mkdir -p $BUILD_WORKING_DIR/archive
+          
+          # This command builds the app unsigned for a real device (arm64)
+          python3 build-system/Make/Make.py build \
+            --configuration=release_arm64 \
+            --disableProvisioningProfiles
+            
+          # Find the .app file. The path is complex.
+          APP_PATH=$(find "bazel-out" -path "*Release-arm64/bin/Telegram/Telegram.app" | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "::error::Could not find .app file in bazel-out"
+            exit 1
+          fi
+          echo "APP_PATH=$APP_PATH" >> $GITHUB_ENV
+          
+          # Set the final IPA path
+          mkdir -p $BUILD_WORKING_DIR/ipa
+          echo "IPA_PATH=$BUILD_WORKING_DIR/ipa/Nicegram.ipa" >> $GITHUB_ENV
 
-          # Build the .xcarchive without signing
-          # We must guess the scheme name here. 'Nicegram' is a common convention.
-          # If this fails, it might be 'Telegram'. Check your .xcworkspace for scheme names.
-          xcodebuild archive \
-            -workspace "Telegram.xcworkspace" \
-            -scheme "Nicegram" \
-            -configuration "Release" \
-            -archivePath "$BUILD_WORKING_DIR/archive/Nicegram.xcarchive" \
-            -destination "generic/platform=iOS" \
-            "CODE_SIGN_IDENTITY=" \
-            "CODE_SIGNING_REQUIRED=NO" \
-            "CODE_SIGNING_ALLOWED=NO"
-
-      # Step 5: Manually package the unsigned .app into a .ipa
+      # Step 6: Manually package the unsigned .app into a .ipa
       - name: Package Unsigned IPA
         run: |
           set -x
-          cd $BUILD_WORKING_DIR/archive
-          
-          # Create the Payload folder
-          mkdir -p Payload
+          mkdir -p "Payload"
+          cp -R "${{ env.APP_PATH }}" "Payload/Nicegram.app"
+          zip -r "${{ env.IPA_PATH }}" "Payload"
 
-          # Copy the .app from the archive into the Payload folder
-          cp -R "Nicegram.xcarchive/Products/Applications/Nicegram.app" "Payload/Nicegram.app"
-          
-          # Zip the Payload folder to create the .ipa
-          zip -r "Nicegram.ipa" "Payload"
-          
-          echo "IPA_PATH=$BUILD_WORKING_DIR/archive/Nicegram.ipa" >> $GITHUB_ENV
-
-      # Step 6: Upload the .ipa as a build artifact
+      # Step 7: Upload the .ipa as a build artifact
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
