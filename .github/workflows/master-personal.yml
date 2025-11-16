@@ -43,30 +43,39 @@ jobs:
           cp -R $GITHUB_WORKSPACE /Users/telegram/
           mv /Users/telegram/$(basename $GITHUB_WORKSPACE) /Users/telegram/telegram-ios
 
-      # Step 5: Create the build configuration file from secrets
+      # Step 5: Create the (correct) build configuration file
       - name: Create Build Configuration
         run: |
           echo "Creating my_config.json"
-          # We create the JSON file that --configurationPath requires.
-          # We must include bundleId and teamId so the script's
-          # validation passes, even if they aren't used for signing.
-          echo '{ \
-            "apiKey": "${{ secrets.API_ID }}", \
-            "apiHash": "${{ secrets.API_HASH }}", \
-            "bundleId": "app.nicegram", \
-            "teamId": "DUMMYTEAMID" \
-          }' > $SOURCE_PATH/my_config.json
           
+          # This creates a valid JSON file with all the required keys
+          # from BuildConfiguration.py, using secrets for api_id/api_hash
+          # and dummy values from the example for the rest.
+          
+          printf '{\n' > $SOURCE_PATH/my_config.json
+          printf '  "bundle_id": "app.nicegram",\n' >> $SOURCE_PATH/my_config.json
+          printf '  "api_id": "%s",\n' "${{ secrets.API_ID }}" >> $SOURCE_PATH/my_config.json
+          printf '  "api_hash": "%s",\n' "${{ secrets.API_HASH }}" >> $SOURCE_PATH/my_config.json
+          printf '  "team_id": "DUMMYTEAMID",\n' >> $SOURCE_PATH/my_config.json
+          printf '  "app_center_id": "0",\n' >> $SOURCE_PATH/my_config.json
+          printf '  "is_internal_build": false,\n' >> $SOURCE_PATH/my_config.json
+          printf '  "is_appstore_build": false,\n' >> $SOURCE_PATH/my_config.json
+          printf '  "appstore_id": "0",\n' >> $SOURCE_PATH/my_config.json
+          printf '  "app_specific_url_scheme": "tg",\n' >> $SOURCE_PATH/my_config.json
+          printf '  "premium_iap_product_id": "org.telegram.telegramPremium.monthly",\n' >> $SOURCE_PATH/my_config.json
+          printf '  "enable_siri": false,\n' >> $SOURCE_PATH/my_config.json
+          printf '  "enable_icloud": false\n' >> $SOURCE_PATH/my_config.json
+          printf '}\n' >> $SOURCE_PATH/my_config.json
+
           echo "Configuration file created:"
           cat $SOURCE_PATH/my_config.json
-          
+
       # Step 6: Generate the Xcode Project
       - name: Generate Xcode Project
         run: |
           set -x
           cd $SOURCE_PATH
           
-          # This command uses the flag that DOES exist: --disableProvisioningProfiles
           python3 build-system/Make/Make.py generateProject \
             --buildNumber ${{ github.run_number }} \
             --configurationPath $SOURCE_PATH/my_config.json \
@@ -80,7 +89,6 @@ jobs:
           cd $SOURCE_PATH
           mkdir -p $BUILD_WORKING_DIR/archive
 
-          # Now that Telegram.xcworkspace exists, this will work.
           xcodebuild archive \
             -workspace "Telegram.xcworkspace" \
             -scheme "Nicegram" \
@@ -102,4 +110,12 @@ jobs:
           mkdir -p Payload
           cp -R "Nicegram.xcarchive/Products/Applications/Nicegram.app" "Payload/Nicegram.app"
           zip -r "Nicegram.ipa" "Payload"
+
+      # Step 9: Upload the .ipa as a build artifact
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nicegram-unsigned
+          path: ${{ env.IPA_PATH }}
+          retention-days: 7
 
