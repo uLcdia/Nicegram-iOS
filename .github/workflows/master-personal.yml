@@ -52,7 +52,7 @@ jobs:
           cp -R $GITHUB_WORKSPACE /Users/telegram/
           mv /Users/telegram/$(basename $GITHUB_WORKSPACE) /Users/telegram/telegram-ios
 
-      # Step 6: Create the (correct) build configuration file
+# Step 6: Create the (correct) build configuration file
       - name: Create Build Configuration
         run: |
           echo "Creating my_config.json"
@@ -79,25 +79,60 @@ jobs:
           set -x
           cd $SOURCE_PATH/build-system/Make
           
-          # 1. Add 'import shlex' at the top
-          sed -i '' '2a \
-          import shlex
-          ' Make.py
-
-          # 2. Fix 'build' function to read the argument (note the 4-space indent)
-          sed -i '' '/bazel_command_line.set_enable_sandbox(arguments.sandbox)/a \
-      if arguments.bazelArguments is not None: bazel_command_line.add_additional_args(arguments.bazelArguments)
-          ' Make.py
+          # Use Python to read, patch, and rewrite the Make.py file.
+          # This is much safer than sed for multi-line, indented patches.
+          python3 -c "
+          with open('Make.py', 'r') as f:
+              lines = f.readlines()
           
-          # 3. Fix 'invoke_build' function to use the argument (note the 8-space indent)
-          sed -i '' '/combined_arguments += self.common_args/i \
-          if self.additional_args is not None: combined_arguments += shlex.split(self.additional_args)
-          ' Make.py
+          # Find insertion points
+          import_point = -1
+          build_func_point = -1
+          invoke_func_point = -1
+          
+          for i, line in enumerate(lines):
+              # Find a known import to insert after
+              if 'import glob' in line and import_point == -1:
+                  import_point = i + 1
+              # Find the line in the 'build' function to insert after
+              if 'bazel_command_line.set_enable_sandbox(arguments.sandbox)' in line:
+                  build_func_point = i + 1
+              # Find the line in the 'invoke_build' function to insert before
+              if 'combined_arguments += self.common_args' in line and 'invoke_build' in lines[i-10]:
+                  invoke_func_point = i
+          
+          # 1. Add 'import shlex'
+          if import_point != -1:
+              lines.insert(import_point, 'import shlex\n')
+              # Adjust other insertion points
+              build_func_point += 1
+              invoke_func_point += 1
+          
+          # 2. Fix 'build' function to read the argument
+          if build_func_point != -1:
+              indent = lines[build_func_point - 1].split('bazel_command_line')[0]
+              lines.insert(build_func_point, f\"{indent}if arguments.bazelArguments is not None: bazel_command_line.add_additional_args(arguments.bazelArguments)\n\")
+              invoke_func_point += 1 # Adjust next insertion point
+          
+          # 3. Fix 'invoke_build' function to use the argument
+          if invoke_func_point != -1:
+              indent = lines[invoke_func_point].split('combined_arguments')[0]
+              lines.insert(invoke_func_point, f\"{indent}if self.additional_args is not None: combined_arguments += shlex.split(self.additional_args)\n\")
+          
+          # Write the patched file out
+          with open('Make.py.patched', 'w') as f:
+              f.writelines(lines)
+          
+          # Replace the original
+          mv Make.py.patched Make.py
+          "
           
           echo "--- Make.py patched ---"
-          echo "Verifying patch 2:"
+          echo "Verifying patch 1 (import):"
+          grep "import shlex" Make.py
+          echo "Verifying patch 2 (build func):"
           grep "bazelArguments is not None" Make.py
-          echo "Verifying patch 3:"
+          echo "Verifying patch 3 (invoke func):"
           grep "additional_args is not None" Make.py
 
       # Step 8: Build Unsigned App (using patched Make.py)
