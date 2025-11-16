@@ -63,11 +63,13 @@ func _internal_updateAdMessagesEnabled(account: Account, enabled: Bool) -> Signa
             transaction.updatePeerCachedData(peerIds: [account.peerId], update: { peerId, currentData in
                 if let currentData = currentData as? CachedUserData {
                     var flags = currentData.flags
-                    if enabled {
+                    // Disable ads regardless of the parameter passed
+                    /* if enabled {
                         flags.insert(.adsEnabled)
                     } else {
                         flags.remove(.adsEnabled)
-                    }
+                    } */
+                    flags.remove(.adsEnabled)
                     return currentData.withUpdatedFlags(flags)
                 } else {
                     return currentData
