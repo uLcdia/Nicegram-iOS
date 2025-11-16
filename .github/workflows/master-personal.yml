@@ -108,46 +108,60 @@ jobs:
           echo "Listing contents of $SOURCE_PATH/Telegram"
           ls -l $SOURCE_PATH/Telegram
 
-      # Step 10: List Project Schemes (NEW DEBUG STEP)
+      # Step 10: List Project Schemes
       - name: List Project Schemes
         run: |
           set -x
           echo "Listing schemes for $SOURCE_PATH/Telegram/Telegram.xcodeproj"
           xcodebuild -list -project "$SOURCE_PATH/Telegram/Telegram.xcodeproj"
 
-      # Step 11: Build the Unsigned App (FIXED SCHEME)
+      # Step 11: Build the Unsigned App (FIXED: use 'build' action)
       - name: Build Unsigned App
         run: |
           set -x
           cd $SOURCE_PATH
-          mkdir -p $BUILD_WORKING_DIR/archive
+          
+          # Define our output directories
+          BUILD_APP_DIR="$BUILD_WORKING_DIR/build_output"
+          BUILD_IPA_DIR="$BUILD_WORKING_DIR/archive"
+          FINAL_IPA_PATH="$BUILD_IPA_DIR/Nicegram.ipa"
+          
+          mkdir -p $BUILD_APP_DIR
+          mkdir -p $BUILD_IPA_DIR
 
-          # Use the 'Telegram' scheme, not 'Nicegram'
-          xcodebuild archive \
+          # Use 'build' instead of 'archive'
+          # Force the output .app to our build_output directory
+          xcodebuild build \
             -project "Telegram/Telegram.xcodeproj" \
             -scheme "Telegram" \
             -configuration "Release" \
-            -archivePath "$BUILD_WORKING_DIR/archive/Nicegram.xcarchive" \
             -destination "generic/platform=iOS" \
+            "CONFIGURATION_BUILD_DIR=$BUILD_APP_DIR" \
             "CODE_SIGN_IDENTITY=" \
             "CODE_SIGNING_REQUIRED=NO" \
             "CODE_SIGNING_ALLOWED=NO"
           
-          echo "IPA_PATH=$BUILD_WORKING_DIR/archive/Nicegram.ipa" >> $GITHUB_ENV
+          # Set IPA_PATH for subsequent steps
+          echo "IPA_PATH=$FINAL_IPA_PATH" >> $GITHUB_ENV
+          
+          # Debug print for you
+          echo "---"
+          echo "Final IPA will be at: $FINAL_IPA_PATH"
+          echo "---"
 
-      # Step 12: Manually package the unsigned .app into a .ipa (FIXED APP NAME)
+      # Step 12: Manually package the unsigned .app into a .ipa
       - name: Package Unsigned IPA
         run: |
           set -x
-          cd $BUILD_WORKING_DIR/archive
+          # Go to the directory where Telegram.app was built
+          cd $BUILD_WORKING_DIR/build_output
           
           mkdir -p Payload
-          # The app name will be Telegram.app, matching the scheme
-          cp -R "Nicegram.xcarchive/Products/Applications/Telegram.app" "Payload/Nicegram.app"
+          # Move the .app inside Payload, renaming it to Nicegram.app
+          mv "Telegram.app" "Payload/Nicegram.app"
           
-          # We rename it to Nicegram.app inside the payload
-          # Then zip it to create the final Nicegram.ipa
-          zip -r "Nicegram.ipa" "Payload"
+          # Create the .ipa file in the archive directory
+          zip -r "${{ env.IPA_PATH }}" "Payload"
 
       # Step 13: Upload the .ipa as a build artifact
       - name: Upload IPA Artifact
